@@ -14,7 +14,9 @@ import { clear, createStore, del, entries, get, set } from "@api/DataStore";
 import { HeaderBarButton } from "@api/HeaderBar";
 import { definePluginSettings, Settings as AppSettings, useSettings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
+import { Heading } from "@components/Heading";
 import { CloudUploadIcon, DeleteIcon, ImageIcon, NoEntrySignIcon } from "@components/Icons";
+import { Paragraph } from "@components/Paragraph";
 import { Switch } from "@components/Switch";
 import { EquicordDevs } from "@utils/constants";
 import { classNameFactory } from "@utils/css";
@@ -23,7 +25,7 @@ import { classes } from "@utils/misc";
 import definePlugin, { makeRange, OptionType } from "@utils/types";
 import { chooseFile } from "@utils/web";
 import type { Message } from "@vencord/discord-types";
-import { Alerts, Button, Clickable, Dialog, Menu, Popout, ThemeStore, Toasts, Tooltip, useCallback, useEffect, useRef, useState } from "@webpack/common";
+import { Alerts, Button, Clickable, Dialog, Menu, Popout, Select, Slider, ThemeStore, Toasts, Tooltip, useCallback, useEffect, useRef, useState } from "@webpack/common";
 import type { ComponentProps } from "react";
 
 const cl = classNameFactory("vc-bgmanager-");
@@ -37,24 +39,65 @@ const MAX_SLIDESHOW_MINUTES = 1440;
 const THEME_BACKGROUND_PROP_RE = /background|bg|wallpaper|backdrop/i;
 const THEME_IMAGE_PROP_RE = /image|img/i;
 
-// Discord paints its shell surfaces with these design token variables
-// (gradient tokens first, base tokens as fallback), so overriding the
-// tokens tints the app without depending on hashed class names.
-const APP_TINT_CSS = `
-body, body :is(.theme-dark, .theme-light) {
-    --background-base-lowest: rgb(0 0 0 / 20%);
-    --background-base-lower: rgb(0 0 0 / 20%);
-    --background-base-low: rgb(0 0 0 / 20%);
-    --background-gradient-highest: rgb(0 0 0 / 20%);
-    --background-gradient-high: rgb(0 0 0 / 20%);
-    --background-gradient-chat: rgb(0 0 0 / 20%);
-    --background-gradient-low: rgb(0 0 0 / 20%);
-    --background-gradient-lower: rgb(0 0 0 / 20%);
-    --background-gradient-lowest: rgb(0 0 0 / 20%);
-    --chat-background-default: rgb(0 0 0 / 20%);
-    --custom-channel-members-bg: rgb(0 0 0 / 20%);
+// Discord paints its shell surfaces with these design token variables.
+// Most surfaces use "var(--background-gradient-X, var(--base-fallback))",
+// so while the tint sets every token the gradient ones win and the
+// fallback tokens only show on surfaces that use them directly.
+const TINT_SURFACES = {
+    "--background-gradient-chat": {
+        label: "Chat & Member List",
+        description: "Chat area, channel header and member list."
+    },
+    "--background-gradient-high": {
+        label: "Channel Sidebar",
+        description: "Server and channel list sidebar."
+    },
+    "--background-gradient-highest": {
+        label: "Chat Input & User Panel",
+        description: "Chat input bar, user panel and boost goal progress."
+    },
+    "--background-base-lowest": {
+        label: "Server Bar & Title Bar",
+        description: "Server (guild) bar and the window title bar."
+    },
+    "--background-base-lower": {
+        label: "Settings Pages",
+        description: "Settings page surfaces; elsewhere a fallback under Chat & Member List."
+    },
+    "--background-base-low": {
+        label: "Settings Sidebar",
+        description: "Settings page surfaces; elsewhere a fallback under Chat Input & User Panel."
+    },
+    "--background-gradient-low": {
+        label: "Search Bar & Forum Pills",
+        description: "Search bar, forum topic pills and the scheduled message bar."
+    },
+    "--background-gradient-lower": {
+        label: "Themed Title Bar (Dark)",
+        description: "Themed channel title bar in dark mode and the forum sidebar."
+    },
+    "--background-gradient-lowest": {
+        label: "Themed Title Bar (Light)",
+        description: "Themed channel title bar in light mode, search results and forum panels."
+    },
+    "--chat-background-default": {
+        label: "Profile Sidebar",
+        description: "User profile side panel and its banner; also the chat input fallback."
+    }
+} as const;
+
+type TintVariable = keyof typeof TINT_SURFACES;
+
+const DEFAULT_TINT_OPACITY = 20;
+
+function buildAppTintCss() {
+    const tints = settings.store.tints ?? {};
+    const declarations = (Object.keys(TINT_SURFACES) as TintVariable[])
+        .map(variable => `    ${variable}: rgb(0 0 0 / ${tints[variable] ?? DEFAULT_TINT_OPACITY}%);`)
+        .join("\n");
+
+    return `body, body :is(.theme-dark, .theme-light) {\n${declarations}\n}`;
 }
-`;
 
 type MediaKind = "image" | "video";
 type ThemeMode = "light" | "dark";
@@ -600,6 +643,42 @@ function makeSliderProps(labelStep: number) {
     };
 }
 
+function TintSettings() {
+    const [selectedVariable, setSelectedVariable] = useState<TintVariable>("--background-gradient-chat");
+    const tints = settings.store.tints ?? {};
+
+    return (
+        <div className={cl("tint-settings")}>
+            <Heading>Surface Tints</Heading>
+            <Paragraph className={cl("tint-note")}>
+                Opacity of the dark tint layered over each app surface while a background is active.
+            </Paragraph>
+            <Select
+                options={Object.entries(TINT_SURFACES).map(([value, { label }]) => ({ value, label }))}
+                maxVisibleItems={5}
+                closeOnSelect={true}
+                select={setSelectedVariable}
+                isSelected={value => value === selectedVariable}
+                serialize={value => String(value)}
+            />
+            <Paragraph className={cl("tint-note")}>
+                {TINT_SURFACES[selectedVariable].description} ({selectedVariable})
+            </Paragraph>
+            <Slider
+                key={selectedVariable}
+                markers={makeRange(0, 100, 5)}
+                minValue={0}
+                maxValue={100}
+                initialValue={tints[selectedVariable] ?? DEFAULT_TINT_OPACITY}
+                onValueChange={value => {
+                    settings.store.tints = { ...settings.store.tints, [selectedVariable]: Math.round(value) };
+                }}
+                {...makeSliderProps(25)}
+            />
+        </div>
+    );
+}
+
 const settings = definePluginSettings({
     enableTransition: {
         type: OptionType.BOOLEAN,
@@ -694,6 +773,12 @@ const settings = definePluginSettings({
         default: 100,
         markers: makeRange(0, 300, 5),
         componentProps: makeSliderProps(50),
+        onChange: notifyUI
+    },
+    tints: {
+        type: OptionType.COMPONENT,
+        default: {} as Partial<Record<TintVariable, number>>,
+        component: () => <TintSettings />,
         onChange: notifyUI
     },
     clearDatabase: {
@@ -935,7 +1020,7 @@ function BgStyleInjector() {
                     </div>
                 );
             })}
-            {currentMedia != null && <style>{APP_TINT_CSS}</style>}
+            {currentMedia != null && <style>{buildAppTintCss()}</style>}
             {shouldRenderThemeOverride && themeOverrideCss && <style>{themeOverrideCss}</style>}
         </>
     );

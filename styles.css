@@ -312,3 +312,18 @@
     appearance: none;
     margin: 0;
 }
+
+/* Surface tint settings */
+.vc-bgmanager-tint-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.vc-bgmanager-tint-settings > :last-child {
+    margin-top: 8px;
+}
+
+.vc-bgmanager-tint-note {
+    color: var(--text-muted);
+}
